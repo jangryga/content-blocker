@@ -1,8 +1,8 @@
 use std::{
     cell::Cell,
-    fmt,
-    process::{Command, exit},
-    sync::{Arc, Mutex},
+    fmt, io,
+    process::{Child, Command, Stdio, exit},
+    sync::{Arc, LazyLock, Mutex},
     thread, time,
 };
 use tao::{
@@ -59,24 +59,77 @@ struct TimerState {
     is_running: Cell<bool>,
 }
 
-fn main() {
+static PROXY: LazyLock<Mutex<Option<Child>>> = LazyLock::new(|| Mutex::new(None));
+
+fn start_proxy() -> io::Result<()> {
     configure_proxy(NetworkProxyStatus::On);
+    let mut guard = PROXY.lock().unwrap();
 
-    let proxy_process = Arc::new(Mutex::new(
-        Command::new("mitmdump")
-            .arg("-s")
-            .arg("redirect.py")
-            // .stdout(std::process::Stdio::null())
-            .spawn()
-            .unwrap(),
-    ));
+    if let Some(mut child) = guard.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 
-    let proxy_process_clone = proxy_process.clone();
+    let child = Command::new("mitmdump")
+        .arg("-q")
+        .arg("-s")
+        .arg("redirect.py")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    *guard = Some(child);
+    Ok(())
+}
+
+fn stop_proxy() -> io::Result<()> {
+    configure_proxy(NetworkProxyStatus::Off);
+    let mut guard = PROXY.lock().unwrap();
+
+    if let Some(mut child) = guard.take() {
+        child.kill()?;
+        child.wait()?;
+    }
+
+    Ok(())
+}
+
+fn set_tray_title(tray: &tray_icon::TrayIcon, title: &str) {
+    use objc2::MainThreadMarker;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{NSFont, NSFontAttributeName};
+    use objc2_foundation::{NSAttributedString, NSDictionary, NSString};
+
+    let Some(status_item) = tray.ns_status_item() else {
+        return;
+    };
+
+    unsafe {
+        let mtm = MainThreadMarker::new_unchecked();
+        let button = status_item.button(mtm).unwrap();
+
+        let font = NSFont::systemFontOfSize(12.0);
+        let ns_title = NSString::from_str(title);
+
+        let attrs =
+            NSDictionary::<NSString, AnyObject>::from_slices(&[NSFontAttributeName], &[&***font]);
+
+        let attr_str = NSAttributedString::initWithString_attributes(
+            <NSAttributedString as objc2::AnyThread>::alloc(),
+            &ns_title,
+            Some(&attrs),
+        );
+
+        button.setAttributedTitle(&attr_str);
+    }
+}
+
+fn main() -> io::Result<()> {
+    start_proxy()?;
 
     ctrlc::set_handler(move || {
-        let mut guard = proxy_process_clone.lock().unwrap();
-        let _ = (*guard).kill();
-        configure_proxy(NetworkProxyStatus::Off);
+        let _ = stop_proxy();
         std::process::exit(0);
     })
     .expect("Error setting Ctrl-C handler");
@@ -163,8 +216,6 @@ fn main() {
 
     let state_clone = Arc::clone(&state);
 
-    let proxy_process_clone = proxy_process.clone();
-
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
@@ -173,19 +224,19 @@ fn main() {
                 let state = state_clone.lock().unwrap();
                 match e.id.as_ref() {
                     "stop" => {
+                        let _ = stop_proxy();
                         state
                             .elapsed_before
                             .update(|x| x + state.start_time.get().elapsed().as_secs());
                         state.is_running.set(false);
                     }
                     "start" => {
+                        let _ = start_proxy();
                         state.is_running.set(true);
                         state.start_time.set(time::Instant::now());
                     }
                     "quit" => {
-                        let mut guard = proxy_process_clone.lock().unwrap();
-                        let _ = (*guard).kill();
-                        configure_proxy(NetworkProxyStatus::Off);
+                        let _ = stop_proxy();
                         *control_flow = ControlFlow::Exit;
                     }
                     _ => {}
@@ -194,7 +245,9 @@ fn main() {
             Event::UserEvent(UserEvent::TrayIconEvent(_e)) => {
                 // println!("[TrayIconEvent] {e:?}");
             }
-            Event::UserEvent(UserEvent::UpdateTitle(new_title)) => tray.set_title(Some(new_title)),
+            Event::UserEvent(UserEvent::UpdateTitle(new_title)) => {
+                set_tray_title(&tray, &new_title);
+            }
             _ => (),
         }
     });
