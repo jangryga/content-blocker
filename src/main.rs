@@ -14,6 +14,8 @@ use tray_icon::{
     menu::{self, Menu},
 };
 
+use web_blocker::session::{self, LocalSession, PrettyFormatter};
+
 enum NetworkProxyStatus {
     On,
     Off,
@@ -109,7 +111,7 @@ fn set_tray_title(tray: &tray_icon::TrayIcon, title: &str) {
         let mtm = MainThreadMarker::new_unchecked();
         let button = status_item.button(mtm).unwrap();
 
-        let font = NSFont::systemFontOfSize(12.0);
+        let font = NSFont::monospacedDigitSystemFontOfSize_weight(12.0, 0.0);
         let ns_title = NSString::from_str(title);
 
         let attrs =
@@ -128,7 +130,11 @@ fn set_tray_title(tray: &tray_icon::TrayIcon, title: &str) {
 fn main() -> io::Result<()> {
     start_proxy()?;
 
+    session::init(Box::new(LocalSession::new()?));
+
     ctrlc::set_handler(move || {
+        let _ = session::stop();
+        let _ = session::save(&PrettyFormatter);
         let _ = stop_proxy();
         std::process::exit(0);
     })
@@ -224,6 +230,7 @@ fn main() -> io::Result<()> {
                 let state = state_clone.lock().unwrap();
                 match e.id.as_ref() {
                     "stop" => {
+                        let _ = session::stop();
                         let _ = stop_proxy();
                         state
                             .elapsed_before
@@ -231,11 +238,13 @@ fn main() -> io::Result<()> {
                         state.is_running.set(false);
                     }
                     "start" => {
+                        let _ = session::start();
                         let _ = start_proxy();
                         state.is_running.set(true);
                         state.start_time.set(time::Instant::now());
                     }
                     "quit" => {
+                        let _ = session::save(&PrettyFormatter);
                         let _ = stop_proxy();
                         *control_flow = ControlFlow::Exit;
                     }
