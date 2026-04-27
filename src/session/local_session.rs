@@ -6,7 +6,7 @@ use std::{fs, io, time};
 use uuid::Uuid;
 
 use super::Session;
-use super::data::{BreakData, SessionData};
+use super::data::{BreakData, SessionData, SessionEvent};
 use super::formatter::SessionFormatter;
 
 struct BreakRecord {
@@ -16,11 +16,14 @@ struct BreakRecord {
 
 pub struct LocalSession {
     id: Uuid,
-    log_file: fs::File,
+    session_log_file: fs::File,
+    event_log_file: fs::File,
     start_instant: time::Instant,
     start_wall: chrono::DateTime<Local>,
     breaks: Vec<BreakRecord>,
     is_running: AtomicBool,
+    event_sink: Vec<SessionEvent>,
+    event_sink_max_size: usize,
 }
 
 impl LocalSession {
@@ -35,18 +38,26 @@ impl LocalSession {
 
         fs::create_dir_all(&log_dir)?;
 
-        let log_file = fs::File::options()
+        let session_log_file = fs::File::options()
             .append(true)
             .create(true)
-            .open(log_dir.join("web-blocker.log"))?;
+            .open(log_dir.join("sessions.log"))?;
+
+        let event_log_file = fs::File::options()
+            .append(true)
+            .create(true)
+            .open(log_dir.join("events.log"))?;
 
         Ok(LocalSession {
             id,
-            log_file,
+            session_log_file,
+            event_log_file,
             start_instant: time::Instant::now(),
             start_wall: Local::now(),
             is_running: AtomicBool::new(true),
             breaks: Vec::new(),
+            event_sink: Vec::new(),
+            event_sink_max_size: 1,
         })
     }
 
@@ -98,8 +109,30 @@ impl Session for LocalSession {
         }
     }
 
+    fn log_event(
+        &mut self,
+        event: SessionEvent,
+        formatter: &dyn SessionFormatter,
+    ) -> io::Result<()> {
+        self.event_sink.push(event);
+        if self.event_sink.len() == self.event_sink_max_size {
+            self.drain(formatter)?;
+        }
+        self.event_sink = Vec::new();
+        Ok(())
+    }
+
+    fn drain(&mut self, formatter: &dyn SessionFormatter) -> io::Result<()> {
+        for event in self.event_sink.iter_mut() {
+            let log = formatter.format_event(&event);
+            self.event_log_file.write_all(log.as_bytes())?
+        }
+        Ok(())
+    }
+
     fn save(&mut self, formatter: &dyn SessionFormatter) -> io::Result<()> {
+        self.stop()?;
         let content = formatter.format(&self.collect());
-        self.log_file.write_all(content.as_bytes())
+        self.session_log_file.write_all(content.as_bytes())
     }
 }

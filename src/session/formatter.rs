@@ -1,7 +1,8 @@
-use super::data::SessionData;
+use super::data::{SessionData, SessionEvent};
 
 pub trait SessionFormatter: Send + Sync {
     fn format(&self, data: &SessionData) -> String;
+    fn format_event(&self, event: &SessionEvent) -> String;
 }
 
 pub struct PrettyFormatter;
@@ -73,6 +74,13 @@ impl SessionFormatter for PrettyFormatter {
                 .unwrap_or_else(|| "—".to_string()),
         )
     }
+
+    fn format_event(&self, event: &SessionEvent) -> String {
+        format!(
+            "{} {}[{}] {}\n",
+            event.timestamp, event.event_type, event.id, event.meta
+        )
+    }
 }
 
 pub struct JsonFormatter;
@@ -121,5 +129,9 @@ impl SessionFormatter for JsonFormatter {
                 .map(|d| d.num_seconds().to_string())
                 .unwrap_or_else(|| "null".to_string()),
         )
+    }
+
+    fn format_event(&self, _event: &SessionEvent) -> String {
+        todo!("SessionFormatter::format_event")
     }
 }

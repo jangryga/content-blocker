@@ -4,13 +4,15 @@ mod web_session;
 pub mod data;
 pub mod formatter;
 
-pub use data::{BreakData, SessionData};
+pub use data::{BreakData, SessionData, SessionEvent};
 pub use formatter::{JsonFormatter, PrettyFormatter, SessionFormatter};
 pub use local_session::LocalSession;
 pub use web_session::WebSession;
 
 use std::io;
 use std::sync::{Mutex, OnceLock};
+
+use crate::session::data::EventType;
 
 pub trait Session: Send {
     fn start(&mut self) -> io::Result<()>;
@@ -20,6 +22,12 @@ pub trait Session: Send {
     fn collect(&self) -> SessionData;
     /// Formats the current snapshot with `formatter` and persists it.
     fn save(&mut self, formatter: &dyn SessionFormatter) -> io::Result<()>;
+    fn drain(&mut self, formatter: &dyn SessionFormatter) -> io::Result<()>;
+    fn log_event(
+        &mut self,
+        event: data::SessionEvent,
+        formatter: &dyn SessionFormatter,
+    ) -> io::Result<()>;
 }
 
 static INSTANCE: OnceLock<Mutex<Box<dyn Session + Send>>> = OnceLock::new();
@@ -53,4 +61,13 @@ pub fn stop() -> io::Result<()> {
 
 pub fn save(formatter: &dyn SessionFormatter) -> io::Result<()> {
     with_session(|s| s.save(formatter))
+}
+
+pub fn log_event(
+    event_type: EventType,
+    meta: String,
+    formatter: &dyn SessionFormatter,
+) -> io::Result<()> {
+    let event = SessionEvent::new(event_type, meta);
+    with_session(|s| s.log_event(event, formatter))
 }

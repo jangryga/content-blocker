@@ -14,7 +14,7 @@ use tray_icon::{
     menu::{self, Menu},
 };
 
-use web_blocker::session::{self, LocalSession, PrettyFormatter};
+use web_blocker::session::{self, LocalSession, PrettyFormatter, data::EventType};
 
 enum NetworkProxyStatus {
     On,
@@ -132,6 +132,12 @@ fn main() -> io::Result<()> {
 
     session::init(Box::new(LocalSession::new()?));
 
+    session::log_event(
+        EventType::TestEvent,
+        String::from("hello world"),
+        &PrettyFormatter,
+    )?;
+
     ctrlc::set_handler(move || {
         let _ = session::stop();
         let _ = session::save(&PrettyFormatter);
@@ -245,6 +251,11 @@ fn main() -> io::Result<()> {
                     }
                     "quit" => {
                         let _ = session::save(&PrettyFormatter);
+                        let _ = session::log_event(
+                            EventType::TestEvent,
+                            String::from("goodbye world"),
+                            &PrettyFormatter,
+                        );
                         let _ = stop_proxy();
                         *control_flow = ControlFlow::Exit;
                     }

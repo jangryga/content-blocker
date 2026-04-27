@@ -1,4 +1,6 @@
-use chrono::{DateTime, Local};
+use std::fmt::Display;
+
+use chrono::{DateTime, Local, Utc};
 use uuid::Uuid;
 
 pub struct BreakData {
@@ -9,6 +11,36 @@ pub struct BreakData {
 impl BreakData {
     pub fn duration(&self) -> Option<chrono::Duration> {
         self.end.map(|end| end - self.start)
+    }
+}
+
+pub enum EventType {
+    TestEvent,
+}
+
+impl Display for EventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EventType::TestEvent => write!(f, "TestEvent"),
+        }
+    }
+}
+
+pub struct SessionEvent {
+    pub timestamp: DateTime<Utc>,
+    pub id: Uuid,
+    pub event_type: EventType,
+    pub meta: Box<str>,
+}
+
+impl SessionEvent {
+    pub fn new(event_type: EventType, meta: impl Into<Box<str>>) -> Self {
+        SessionEvent {
+            timestamp: Utc::now(),
+            id: Uuid::new_v4(),
+            event_type,
+            meta: meta.into(),
+        }
     }
 }
 
